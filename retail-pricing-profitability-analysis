@@ -1,0 +1,543 @@
+Retail Pricing Strategy & Profitability Optimization Analysis
+
+End-to-end retail pricing analytics project using PostgreSQL and Power BI to evaluate discount effectiveness, product profitability, and pricing strategy across 50,000 transactions
+
+https://img.shields.io/badge/PostgreSQL-14-336791?style=for-the-badge&logo=postgresql&logoColor=white
+https://img.shields.io/badge/Power_BI-F2C811?style=for-the-badge&logo=powerbi&logoColor=black
+https://img.shields.io/badge/SQL-PostgreSQL-4479A1?style=for-the-badge&logo=postgresql&logoColor=white
+https://img.shields.io/badge/License-MIT-green?style=for-the-badge
+
+---
+
+📌 Project Overview
+
+One sentence: Profit margins have declined 4.2 percentage points due to aggressive discounting—we need to identify which high-discount products are destroying value and which discounts are actually working.
+
+The questions we're answering:
+
+1. Which products with discounts >25% generate minimal sales lift and should be repriced?
+2. Which product-region combinations are operating at a net loss?
+3. What is the statistical relationship between discount depth and unit sales by category?
+4. Which products deliver healthy margins despite discounts and should keep promotional support?
+
+---
+
+✨ Features
+
+· Profitability Analysis: Transaction-level gross profit and margin calculations using retail accounting standards
+· Statistical Correlation: Pearson correlation analysis between discount depth and sales volume using PostgreSQL CORR()
+· Product Classification: Automated product segmentation (Critical, Warning, Healthy, Excellent) using CASE statements
+· Regional Performance: Comparative analysis across 3 regions with discount discipline scoring
+· Interactive Dashboard: 6-page Power BI dashboard with executive KPIs and actionable recommendations
+· Data Validation: Comprehensive quality checks ensuring data integrity
+
+---
+
+📂 Dataset
+
+Source: Synthetic dataset generated to reflect realistic retail pricing, discount, and return behavior based on publicly available industry patterns
+
+Scope: 500 products across 3 categories (Electronics, Grocery, Apparel) and 3 regions (Northeast, Southeast, West) with 12 months of transactional data (Jan-Dec 2025)
+
+Scale: ~50,000 transactions
+
+Key fields:
+
+· Transaction-level: Transaction ID (unique), Product ID, Region ID, Customer ID, Order ID, Line Number, Sale Date, Quantity Sold, Units Returned, Selling Price, Unit Cost, Discount %
+· Product attributes: Category, Base Price
+
+---
+
+🛠️ Tech Stack
+
+Tool Purpose
+PostgreSQL Data warehouse (schema + queries)
+SQL (PostgreSQL) CTEs, window functions, CASE, CORR(), aggregations
+Power BI Interactive dashboard (6 pages)
+Excel Sensitivity analysis & recommendation math
+
+---
+
+📊 Dashboard Preview
+
+Executive KPI Dashboard
+
+dashboard/exports/01_executive_kpi.png
+
+Revenue: $35.2M | Gross Profit: $4.4M | Gross Margin: 12.5% | Avg Discount: 18% | Return Rate: 8.2% | 500 Products Analyzed
+
+Sales Analysis
+
+dashboard/exports/02_sales_analysis.png
+
+Sales by region, category, and top products with 12-month trend
+
+Profitability Analysis
+
+dashboard/exports/03_profitability.png
+
+Gross margin by product and region with loss-making products highlighted
+
+Discount Impact Analysis
+
+dashboard/exports/04_discount_scatter.png
+
+Scatter plot showing discount % vs sales lift with correlation coefficients by category
+
+Regional Performance
+
+dashboard/exports/05_regional_performance.png
+
+Regional comparison of revenue, margin, and discount rates
+
+Recommendations Dashboard
+
+dashboard/exports/06_recommendations.png
+
+Top 10 actions with expected financial impact
+
+📎 Full interactive dashboard: dashboard/pricing_dashboard.pbix
+
+---
+
+🔍 SQL Highlights
+
+1. Statistical Correlation (Correctly Calculated)
+
+```sql
+-- ============================================
+-- Statistical correlation by category
+-- Measures association, not causation
+-- ============================================
+
+SELECT 
+    category,
+    ROUND(CORR(discount_pct, quantity_sold)::numeric, 3) AS discount_volume_correlation,
+    COUNT(*) AS sample_size,
+    CASE 
+        WHEN CORR(discount_pct, quantity_sold) > 0.3 THEN 'MODERATE POSITIVE: Higher discounts associated with higher volume'
+        WHEN CORR(discount_pct, quantity_sold) > 0.1 THEN 'WEAK POSITIVE: Slight association'
+        WHEN CORR(discount_pct, quantity_sold) > -0.1 THEN 'NO CORRELATION: No meaningful association'
+        ELSE 'NEGATIVE: Higher discounts associated with lower volume'
+    END AS interpretation
+FROM sales_transactions t
+JOIN products p ON t.product_id = p.product_id
+GROUP BY category;
+```
+
+Results:
+
+· Electronics: +0.42 (moderate positive association)
+· Apparel: +0.18 (weak positive association)
+· Grocery: +0.06 (no meaningful association)
+
+Interpretation: Higher discounts are associated with higher sales volume only in Electronics. For Grocery, there is no statistical association between discount depth and sales volume.
+
+---
+
+2. Profit Calculation (Correct Retail Accounting)
+
+```sql
+-- ============================================
+-- Profit metrics - Retail accounting standard
+-- Revenue and COGS both adjusted for returns
+-- ============================================
+
+WITH base_transactions AS (
+    SELECT 
+        t.transaction_id,
+        t.product_id,
+        t.region_id,
+        t.customer_id,
+        t.order_id,
+        t.sale_date,
+        t.quantity_sold,
+        t.units_returned,
+        t.actual_selling_price,
+        p.unit_cost,
+        p.base_price,
+        p.product_name,
+        p.category,
+        r.region_name,
+        
+        -- Net units (sold minus returned)
+        (t.quantity_sold - t.units_returned) AS net_units,
+        
+        -- Revenue: Only from units NOT returned
+        t.actual_selling_price * (t.quantity_sold - t.units_returned) AS net_revenue,
+        
+        -- COGS: Only for units NOT returned
+        p.unit_cost * (t.quantity_sold - t.units_returned) AS cogs
+        
+    FROM sales_transactions t
+    JOIN products p ON t.product_id = p.product_id
+    JOIN regions r ON t.region_id = r.region_id
+),
+
+profit_calculations AS (
+    SELECT 
+        *,
+        -- Gross Profit: Revenue - COGS (returns already removed)
+        net_revenue - cogs AS gross_profit,
+        
+        -- Gross Margin %
+        ROUND(((net_revenue - cogs) / NULLIF(net_revenue, 0)) * 100, 2) AS gross_margin_pct,
+        
+        -- Profit per unit
+        (net_revenue - cogs) / NULLIF(net_units, 0) AS profit_per_unit,
+        
+        -- Estimated revenue foregone due to discounts (corrected: comparing same quantity)
+        (base_price * net_units) - net_revenue AS estimated_discount_revenue_foregone
+        
+    FROM base_transactions
+)
+
+SELECT * FROM profit_calculations;
+```
+
+---
+
+3. Product Classification (CASE + Window Functions)
+
+```sql
+-- ============================================
+-- Strategic product classification
+-- Identifies critical issues and opportunities
+-- ============================================
+
+WITH product_metrics AS (
+    SELECT 
+        p.product_name,
+        p.category,
+        r.region_name,
+        SUM(t.quantity_sold - t.units_returned) AS total_net_units,
+        ROUND(SUM(t.actual_selling_price * (t.quantity_sold - t.units_returned)), 2) AS total_revenue,
+        ROUND(SUM(p.unit_cost * (t.quantity_sold - t.units_returned)), 2) AS total_cogs,
+        ROUND(AVG(t.discount_pct), 2) AS avg_discount_pct,
+        ROUND(SUM(
+            (t.actual_selling_price * (t.quantity_sold - t.units_returned)) - 
+            (p.unit_cost * (t.quantity_sold - t.units_returned))
+        ), 2) AS total_gross_profit
+    FROM sales_transactions t
+    JOIN products p ON t.product_id = p.product_id
+    JOIN regions r ON t.region_id = r.region_id
+    GROUP BY p.product_name, p.category, r.region_name
+),
+
+ranked_products AS (
+    SELECT 
+        *,
+        RANK() OVER (PARTITION BY region_name ORDER BY total_gross_profit DESC) AS profit_rank,
+        ROW_NUMBER() OVER (PARTITION BY category ORDER BY total_gross_profit DESC) AS category_rank,
+        ROUND((total_gross_profit / NULLIF(total_revenue, 0)) * 100, 2) AS gross_margin_pct,
+        
+        CASE 
+            WHEN total_gross_profit < 0 AND avg_discount_pct > 25 THEN 'CRITICAL: Loss-Making + High Discount'
+            WHEN gross_margin_pct < 10 AND avg_discount_pct > 25 THEN 'WARNING: Margin Erosion'
+            WHEN gross_margin_pct > 20 AND avg_discount_pct <= 20 THEN 'HEALTHY: Profitable with Discount'
+            WHEN gross_margin_pct > 30 AND avg_discount_pct < 10 THEN 'EXCELLENT: High Margin, Low Discount'
+            ELSE 'NEUTRAL: Review Required'
+        END AS classification
+        
+    FROM product_metrics
+)
+
+SELECT 
+    product_name,
+    category,
+    region_name,
+    total_revenue,
+    total_gross_profit,
+    gross_margin_pct,
+    avg_discount_pct,
+    profit_rank,
+    classification
+FROM ranked_products
+WHERE classification IN ('CRITICAL: Loss-Making + High Discount', 'WARNING: Margin Erosion')
+ORDER BY classification, total_gross_profit ASC;
+```
+
+---
+
+4. Data Validation (Critical Quality Checks)
+
+```sql
+-- ============================================
+-- VALIDATION: Data quality checks
+-- Demonstrates analytical discipline
+-- ============================================
+
+-- Check 1: Revenue is never negative
+SELECT 
+    'Revenue Non-Negative' AS check_name,
+    COUNT(*) AS error_count,
+    CASE 
+        WHEN COUNT(*) = 0 THEN '✅ PASSED'
+        ELSE '❌ FAILED'
+    END AS status
+FROM sales_transactions
+WHERE actual_selling_price * (quantity_sold - units_returned) < 0;
+
+-- Check 2: COGS is never negative
+SELECT 
+    'COGS Non-Negative' AS check_name,
+    COUNT(*) AS error_count,
+    CASE 
+        WHEN COUNT(*) = 0 THEN '✅ PASSED'
+        ELSE '❌ FAILED'
+    END AS status
+FROM sales_transactions t
+JOIN products p ON t.product_id = p.product_id
+WHERE p.unit_cost * (t.quantity_sold - t.units_returned) < 0;
+
+-- Check 3: Units returned never exceed units sold
+SELECT 
+    'Returns ≤ Sales' AS check_name,
+    COUNT(*) AS error_count,
+    CASE 
+        WHEN COUNT(*) = 0 THEN '✅ PASSED'
+        ELSE '❌ FAILED'
+    END AS status
+FROM sales_transactions
+WHERE units_returned > quantity_sold;
+
+-- Check 4: Selling price never exceeds base price
+SELECT 
+    'Price ≤ Base Price' AS check_name,
+    COUNT(*) AS error_count,
+    CASE 
+        WHEN COUNT(*) = 0 THEN '✅ PASSED'
+        ELSE '❌ FAILED'
+    END AS status
+FROM sales_transactions t
+JOIN products p ON t.product_id = p.product_id
+WHERE t.actual_selling_price > p.base_price;
+
+-- Check 5: Unit cost less than base price (positive margin)
+SELECT 
+    'Cost < Base Price' AS check_name,
+    COUNT(*) AS error_count,
+    CASE 
+        WHEN COUNT(*) = 0 THEN '✅ PASSED'
+        ELSE '❌ FAILED'
+    END AS status
+FROM products
+WHERE unit_cost >= base_price;
+
+-- Check 6: No duplicate transactions (using order_id + line_number)
+SELECT 
+    'No Duplicate Transactions' AS check_name,
+    COUNT(*) AS duplicate_count,
+    CASE 
+        WHEN COUNT(*) = 0 THEN '✅ PASSED'
+        ELSE '⚠️ WARNING: Duplicates found'
+    END AS status
+FROM (
+    SELECT 
+        order_id,
+        line_number,
+        COUNT(*) AS transaction_count
+    FROM sales_transactions
+    GROUP BY order_id, line_number
+    HAVING COUNT(*) > 1
+) AS duplicates;
+```
+
+---
+
+5. Performance Indexes
+
+```sql
+-- ============================================
+-- PERFORMANCE INDEXES: Query optimization
+-- ============================================
+
+-- Support discount analysis queries
+CREATE INDEX idx_discount_pct ON sales_transactions(discount_pct);
+
+-- Support product-region grouping and joins
+CREATE INDEX idx_product_region ON sales_transactions(product_id, region_id);
+
+-- Support time-series analysis
+CREATE INDEX idx_sale_date ON sales_transactions(sale_date);
+
+-- Support profit calculation joins
+CREATE INDEX idx_product_id ON sales_transactions(product_id);
+CREATE INDEX idx_region_id ON sales_transactions(region_id);
+
+-- Support customer-level analysis
+CREATE INDEX idx_customer_id ON sales_transactions(customer_id);
+
+-- Support order-level analysis
+CREATE INDEX idx_order_id ON sales_transactions(order_id);
+
+-- Support category filtering
+CREATE INDEX idx_product_category ON products(category);
+```
+
+---
+
+6. Executive KPIs (Finance Dashboard Metrics)
+
+```sql
+-- ============================================
+-- EXECUTIVE KPIs: Finance dashboard metrics
+-- ============================================
+
+SELECT 
+    COUNT(DISTINCT transaction_id) AS total_transactions,
+    COUNT(DISTINCT customer_id) AS unique_customers,
+    COUNT(DISTINCT product_id) AS products_analyzed,
+    SUM(quantity_sold) AS total_units_sold,
+    SUM(units_returned) AS total_units_returned,
+    ROUND((SUM(units_returned) / NULLIF(SUM(quantity_sold), 0)) * 100, 2) AS return_rate_pct,
+    ROUND(SUM(actual_selling_price * (quantity_sold - units_returned)), 2) AS total_revenue,
+    ROUND(SUM(unit_cost * (quantity_sold - units_returned)), 2) AS total_cogs,
+    ROUND(SUM(
+        (actual_selling_price * (quantity_sold - units_returned)) - 
+        (unit_cost * (quantity_sold - units_returned))
+    ), 2) AS total_gross_profit,
+    ROUND((SUM(
+        (actual_selling_price * (quantity_sold - units_returned)) - 
+        (unit_cost * (quantity_sold - units_returned))
+    ) / NULLIF(SUM(actual_selling_price * (quantity_sold - units_returned)), 0)) * 100, 2) AS gross_margin_pct,
+    ROUND(AVG(discount_pct), 2) AS avg_discount_pct,
+    ROUND(AVG(actual_selling_price), 2) AS avg_selling_price,
+    ROUND(SUM(actual_selling_price * (quantity_sold - units_returned)) / NULLIF(COUNT(DISTINCT transaction_id), 0), 2) AS revenue_per_transaction
+FROM sales_transactions t
+JOIN products p ON t.product_id = p.product_id;
+```
+
+---
+
+💡 Top Recommendations
+
+# Recommendation Annual Impact*
+1 Evaluate removing discounts on four loss-making products through controlled pricing tests +$373,000
+2 Reduce discounts on eight ineffective products +$351,000
+3 Implement 20% discount cap in Southeast region +$343,000
+4 Increase prices on four top-performing grocery items +$273,000
+Total Estimated Net Impact  +$1,090,000
+
+*Impact calculated directly from dataset margin improvements. Volume impact uses assumed elasticity values from industry literature (clearly labeled as scenario analysis). Represents 3.1% of total revenue.
+
+Critical Products to Address
+
+Product Region Discount Current Margin Issue
+Noise-Canceling Headphones Southeast 30% -7.9% High discount + high returns
+Premium Headphones West 28% -6.2% Ineffective discount
+Organic Snack Box Southeast 35% -5.1% Discount doesn't drive volume
+
+---
+
+💼 Business Value Delivered
+
+· Identified loss-making products through transaction-level SQL analysis across 500 products and 50K transactions
+· Quantified an estimated $1.09M annual profit improvement opportunity through strategic discount adjustments (3.1% of revenue)
+· Applied Pearson correlation analysis using PostgreSQL CORR() to quantify the relationship between discount depth and sales volume by category
+· Built an interactive Power BI dashboard enabling management to monitor pricing performance and make data-driven decisions
+· Performed comprehensive data validation to improve confidence in analytical results
+· Developed actionable recommendations with transparent calculations and clearly labeled assumptions
+
+---
+
+🔧 Installation & Requirements
+
+Requirements
+
+· PostgreSQL 14 or higher
+· Power BI Desktop (for dashboard viewing)
+· SQL client (pgAdmin, DBeaver, or similar)
+
+Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/retail-pricing-optimization.git
+cd retail-pricing-optimization
+
+# Create database
+createdb retail_analysis
+
+# Run schema
+psql -d retail_analysis -f data/schema.sql
+
+# Load sample data (1,000 transactions)
+psql -d retail_analysis -f data/sample_data.sql
+
+# For full dataset (50K transactions):
+# psql -d retail_analysis -c "\copy sales_transactions FROM 'data/retail_sales_full.csv' CSV HEADER"
+
+# Run analysis queries
+psql -d retail_analysis -f sql/02_revenue_calculation.sql
+psql -d retail_analysis -f sql/03_profit_calculation.sql
+psql -d retail_analysis -f sql/04_kpi_aggregation.sql
+psql -d retail_analysis -f sql/05_discount_correlation.sql
+psql -d retail_analysis -f sql/06_validation.sql
+```
+
+---
+
+🗂️ Repository Structure
+
+```
+retail-pricing-optimization/
+│
+├── README.md                         # This file - project overview
+│
+├── data/
+│   ├── schema.sql                    # Complete table definitions
+│   ├── sample_data.sql               # 1,000 sample transactions (subset)
+│   └── retail_sales_full.csv         # Full dataset (500 products, 12 months, ~50K transactions)
+│
+├── sql/
+│   ├── 01_schema_setup.sql           # CREATE tables & indexes
+│   ├── 02_revenue_calculation.sql    # Base metrics, revenue
+│   ├── 03_profit_calculation.sql     # Profit metrics, margins
+│   ├── 04_kpi_aggregation.sql        # KPIs, rankings, classifications
+│   ├── 05_discount_correlation.sql   # Statistical analysis (CORR)
+│   └── 06_validation.sql             # Data quality checks
+│
+├── analysis/
+│   ├── methodology.md                # Detailed approach, formulas, assumptions
+│   ├── calculations.xlsx             # Transparent math for recommendations
+│   └── kpi_breakdown.md              # All business KPIs with definitions
+│
+└── dashboard/
+    ├── pricing_dashboard.pbix        # Power BI file (6 pages)
+    └── exports/                      # PNG images for recruiter preview
+        ├── 01_executive_kpi.png
+        ├── 02_sales_analysis.png
+        ├── 03_profitability.png
+        ├── 04_discount_scatter.png
+        ├── 05_regional_performance.png
+        └── 06_recommendations.png
+```
+
+---
+
+📚 Detailed Methodology
+
+For comprehensive methodology, formulas, and assumptions, see: analysis/methodology.md
+
+Key highlights:
+
+· Data Generation: Synthetic dataset based on industry patterns with 500 products, 50K transactions, 12 months
+· Profit Calculation: Retail accounting standard (revenue and COGS both adjusted for returns)
+· Statistical Analysis: Pearson correlation coefficient using PostgreSQL CORR() function
+· Sales Lift: Baseline volume = average sales with 0% discount
+· Elasticity Assumptions: Industry literature values used for scenario analysis only
+
+---
+
+
+📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+---
+
+👤 Author
+
+Fayaz Ali | SQL · Power BI
+📧 [fayazahmedkalhoro371@gmail.com] | 🔗 https://www.linkedin.com/in/fayaz-ali-connect
